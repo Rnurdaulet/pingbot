@@ -26,7 +26,7 @@ type statusStore interface {
 	RecentDowns(limit int) ([]store.IncidentRow, error)
 }
 
-// runBotCommands long-polls Telegram for chat commands in the configured chat.
+// runBotCommands long-polls Telegram for chat commands and inline callbacks.
 func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config, db statusStore, chk *checker.Checker, manager *state.Manager) {
 	offset := 0
 	for {
@@ -52,6 +52,12 @@ func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config
 
 		for _, u := range updates {
 			offset = u.UpdateID + 1
+
+			if u.CallbackQuery != nil {
+				handleCallback(ctx, tg, cfg, chk, manager, u.CallbackQuery)
+				continue
+			}
+
 			if u.Message == nil || u.Message.Text == "" {
 				continue
 			}
@@ -93,6 +99,38 @@ func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config
 	}
 }
 
+func handleCallback(ctx context.Context, tg *telegram.Client, cfg *config.Config, chk *checker.Checker, manager *state.Manager, cb *telegram.CallbackQuery) {
+	chatID := int64(0)
+	if cb.Message != nil {
+		chatID = cb.Message.Chat.ID
+	}
+	if chatID == 0 || !tg.AllowedChat(chatID) {
+		_ = tg.AnswerCallback(cb.ID, "unauthorized")
+		return
+	}
+
+	switch {
+	case cb.Data == telegram.CallbackMute1h:
+		until := manager.Mute(time.Hour)
+		_ = tg.AnswerCallback(cb.ID, "muted 1h")
+		msg := fmt.Sprintf("alerts muted for 1h (until %s UTC)", until.UTC().Format("15:04"))
+		if err := tg.Send(msg); err != nil {
+			slog.Error("telegram mute callback reply failed", "error", err)
+		}
+
+	default:
+		if target, ok := telegram.ParseCheckCallback(cb.Data); ok {
+			_ = tg.AnswerCallback(cb.ID, "checking…")
+			reply := buildCheckReply(ctx, cfg, chk, []string{target})
+			if err := tg.Send(reply); err != nil {
+				slog.Error("telegram check callback reply failed", "error", err)
+			}
+			return
+		}
+		_ = tg.AnswerCallback(cb.ID, "unknown action")
+	}
+}
+
 func helpText() string {
 	return strings.TrimSpace(`
 commands:
@@ -104,6 +142,8 @@ commands:
 /mute <duration> — silence alerts (e.g. 1h, 30m)
 /unmute — resume alerts
 /help — this list
+
+DOWN alerts include Check and Mute 1h buttons.
 `)
 }
 

@@ -46,6 +46,9 @@ func run(configPath string) error {
 	defer db.Close()
 
 	tg := telegram.New(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	if err := tg.SetMyCommands(telegram.DefaultCommands()); err != nil {
+		slog.Warn("telegram setMyCommands failed", "error", err)
+	}
 	if err := notifyStartup(tg, cfg, db); err != nil {
 		return err
 	}

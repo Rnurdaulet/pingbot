@@ -64,6 +64,8 @@ In the alerts chat (same `TELEGRAM_CHAT_ID`):
 - `/mute 1h` / `/unmute` — silence alerts  
 - `/help` — list commands  
 
+Command menu is registered automatically. DOWN alerts have **Check** / **Mute 1h** buttons.
+
 No public domain required (long polling).
 
 ## Upgrade

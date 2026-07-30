@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"html"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -19,10 +20,6 @@ const (
 	Down     Status = "down"
 	Degraded Status = "degraded"
 )
-
-type Notifier interface {
-	Send(text string) error
-}
 
 type Store interface {
 	SetStatus(target string, status string, at time.Time) error
@@ -44,7 +41,7 @@ type Manager struct {
 	targets    map[string]*tracker
 	notifier   Notifier
 	store      Store
-	alerts     chan string
+	alerts     chan Message
 	done       chan struct{}
 	mutedUntil atomic.Int64 // unix nano; 0 = not muted
 }
@@ -54,7 +51,7 @@ func NewManager(notifier Notifier, store Store) *Manager {
 		targets:  make(map[string]*tracker),
 		notifier: notifier,
 		store:    store,
-		alerts:   make(chan string, 64),
+		alerts:   make(chan Message, 64),
 		done:     make(chan struct{}),
 	}
 	go m.senderLoop()
@@ -67,7 +64,7 @@ func NewManager(notifier Notifier, store Store) *Manager {
 func (m *Manager) senderLoop() {
 	defer close(m.done)
 	for msg := range m.alerts {
-		if err := m.notifier.Send(msg); err != nil {
+		if err := m.notifier.SendMessage(msg); err != nil {
 			slog.Error("telegram send failed", "error", err)
 		}
 	}
@@ -145,11 +142,15 @@ func (m *Manager) transitionDown(t config.Target, tr *tracker, r checker.Result)
 		slog.Error("store open incident", "target", t.Name, "error", err)
 	}
 
-	msg := fmt.Sprintf("🔴 %s DOWN\n%s", t.Name, r.Err)
+	msg := fmt.Sprintf("🔴 <b>%s</b> DOWN\n%s", html.EscapeString(t.Name), html.EscapeString(r.Err))
 	if wasUnknown {
 		msg += "\n(first check after startup)"
 	}
-	m.notify(msg)
+	m.notify(Message{
+		Text:    msg,
+		HTML:    true,
+		Buttons: downButtons(t.Name),
+	})
 }
 
 func (m *Manager) transitionUpFromDown(t config.Target, tr *tracker, r checker.Result) {
@@ -159,8 +160,11 @@ func (m *Manager) transitionUpFromDown(t config.Target, tr *tracker, r checker.R
 	m.persistStatus(t.Name, Up)
 	m.closeIncidents(t.Name)
 
-	m.notify(fmt.Sprintf("🟢 %s UP\ndown for %s\nlatency %dms",
-		t.Name, formatDuration(downFor), r.Latency.Milliseconds()))
+	m.notify(Message{
+		Text: fmt.Sprintf("🟢 <b>%s</b> UP\ndown for %s\nlatency %dms",
+			html.EscapeString(t.Name), formatDuration(downFor), r.Latency.Milliseconds()),
+		HTML: true,
+	})
 }
 
 func (m *Manager) transitionDegraded(t config.Target, tr *tracker, r checker.Result) {
@@ -173,7 +177,10 @@ func (m *Manager) transitionDegraded(t config.Target, tr *tracker, r checker.Res
 		slog.Error("store open incident", "target", t.Name, "error", err)
 	}
 
-	m.notify(fmt.Sprintf("🟡 %s SLOW\n%s", t.Name, reason))
+	m.notify(Message{
+		Text: fmt.Sprintf("🟡 <b>%s</b> SLOW\n%s", html.EscapeString(t.Name), html.EscapeString(reason)),
+		HTML: true,
+	})
 }
 
 func (m *Manager) transitionUpFromDegraded(t config.Target, tr *tracker, r checker.Result) {
@@ -183,8 +190,22 @@ func (m *Manager) transitionUpFromDegraded(t config.Target, tr *tracker, r check
 	m.persistStatus(t.Name, Up)
 	m.closeIncidents(t.Name)
 
-	m.notify(fmt.Sprintf("🟢 %s OK\nlatency back to normal: %dms (was slow for %s)",
-		t.Name, r.Latency.Milliseconds(), formatDuration(slowFor)))
+	m.notify(Message{
+		Text: fmt.Sprintf("🟢 <b>%s</b> OK\nlatency back to normal: %dms (was slow for %s)",
+			html.EscapeString(t.Name), r.Latency.Milliseconds(), formatDuration(slowFor)),
+		HTML: true,
+	})
+}
+
+// downButtons builds inline actions for a DOWN alert.
+// Callback payloads must stay ≤64 bytes (Telegram limit).
+func downButtons(target string) [][]Button {
+	row := []Button{{Label: "Mute 1h", Data: "m:1h"}}
+	checkData := "c:" + target
+	if len(checkData) <= 64 {
+		row = append([]Button{{Label: "Check", Data: checkData}}, row...)
+	}
+	return [][]Button{row}
 }
 
 func (m *Manager) persistStatus(target string, s Status) {
@@ -228,15 +249,15 @@ func (m *Manager) muted() bool {
 	return ok
 }
 
-func (m *Manager) notify(text string) {
+func (m *Manager) notify(msg Message) {
 	if m.muted() {
-		slog.Info("alert suppressed (muted)", "text", text)
+		slog.Info("alert suppressed (muted)", "text", msg.Text)
 		return
 	}
 	select {
-	case m.alerts <- text:
+	case m.alerts <- msg:
 	default:
-		slog.Warn("alert queue full, dropping alert", "text", text)
+		slog.Warn("alert queue full, dropping alert", "text", msg.Text)
 	}
 }
 

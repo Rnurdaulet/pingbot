@@ -81,6 +81,8 @@ In the alerts chat you can also ask the bot (no domain needed):
 - `/mute 1h` / `/unmute` — silence alerts during maintenance  
 - `/help` — command list  
 
+Commands are registered via `setMyCommands` (shown in Telegram’s menu). Alerts use HTML (`<b>name</b>`). DOWN alerts include inline buttons **Check** and **Mute 1h**.
+
 Only messages from `TELEGRAM_CHAT_ID` are answered. Mute suppresses Telegram alerts only; checks and DB history keep running.
 
 ### Heartbeat

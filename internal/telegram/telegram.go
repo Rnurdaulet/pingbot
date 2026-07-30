@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Rnurdaulet/pingbot/internal/state"
 )
 
 type Client struct {
@@ -31,37 +33,112 @@ func New(token, chatID string) *Client {
 
 func (c *Client) ChatID() string { return c.chatID }
 
+// Send sends a plain-text message (no parse_mode).
 func (c *Client) Send(text string) error {
-	return c.SendTo(c.chatID, text)
+	return c.SendMessage(state.Message{Text: text})
 }
 
-func (c *Client) SendTo(chatID, text string) error {
-	payload, err := json.Marshal(map[string]string{
-		"chat_id": chatID,
-		"text":    text,
-	})
+// SendMessage implements state.Notifier.
+func (c *Client) SendMessage(msg state.Message) error {
+	payload := map[string]any{
+		"chat_id": c.chatID,
+		"text":    msg.Text,
+	}
+	if msg.HTML {
+		payload["parse_mode"] = "HTML"
+	}
+	if len(msg.Buttons) > 0 {
+		payload["reply_markup"] = buildInlineKeyboard(msg.Buttons)
+	}
+	return c.postJSON("sendMessage", payload)
+}
+
+func buildInlineKeyboard(rows [][]state.Button) map[string]any {
+	out := make([][]map[string]string, 0, len(rows))
+	for _, row := range rows {
+		r := make([]map[string]string, 0, len(row))
+		for _, b := range row {
+			r = append(r, map[string]string{
+				"text":          b.Label,
+				"callback_data": b.Data,
+			})
+		}
+		out = append(out, r)
+	}
+	return map[string]any{"inline_keyboard": out}
+}
+
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// SetMyCommands registers the bot command menu in Telegram clients.
+func (c *Client) SetMyCommands(commands []BotCommand) error {
+	return c.postJSON("setMyCommands", map[string]any{"commands": commands})
+}
+
+// DefaultCommands is the slash-command menu for pingbot.
+func DefaultCommands() []BotCommand {
+	return []BotCommand{
+		{Command: "status", Description: "Current status"},
+		{Command: "stats", Description: "Uptime 24h / 7d / 30d"},
+		{Command: "incidents", Description: "Last downs"},
+		{Command: "check", Description: "Live check: /check <target>"},
+		{Command: "info", Description: "Config summary (redacted)"},
+		{Command: "mute", Description: "Silence alerts: /mute 1h"},
+		{Command: "unmute", Description: "Resume alerts"},
+		{Command: "help", Description: "Command list"},
+	}
+}
+
+func (c *Client) AnswerCallback(callbackID, text string) error {
+	payload := map[string]any{"callback_query_id": callbackID}
+	if text != "" {
+		payload["text"] = text
+		payload["show_alert"] = false
+	}
+	return c.postJSON("answerCallbackQuery", payload)
+}
+
+func (c *Client) postJSON(method string, payload any) error {
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.token)
-	resp, err := c.http.Post(apiURL, "application/json", bytes.NewReader(payload))
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
+	resp, err := c.http.Post(apiURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("telegram %s status %d: %s", method, resp.StatusCode, b)
 	}
 	return nil
 }
 
 type Update struct {
-	UpdateID int `json:"update_id"`
-	Message  *struct {
-		Text string `json:"text"`
+	UpdateID      int             `json:"update_id"`
+	Message       *MessageUpdate  `json:"message"`
+	CallbackQuery *CallbackQuery  `json:"callback_query"`
+}
+
+type MessageUpdate struct {
+	Text string `json:"text"`
+	Chat struct {
+		ID int64 `json:"id"`
+	} `json:"chat"`
+}
+
+type CallbackQuery struct {
+	ID   string `json:"id"`
+	Data string `json:"data"`
+	From struct {
+		ID int64 `json:"id"`
+	} `json:"from"`
+	Message *struct {
 		Chat struct {
 			ID int64 `json:"id"`
 		} `json:"chat"`
@@ -78,7 +155,7 @@ func (c *Client) GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Upda
 	q := url.Values{}
 	q.Set("offset", strconv.Itoa(offset))
 	q.Set("timeout", strconv.Itoa(timeoutSec))
-	q.Set("allowed_updates", `["message"]`)
+	q.Set("allowed_updates", `["message","callback_query"]`)
 
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?%s", c.token, q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
@@ -136,4 +213,26 @@ func Args(text string) []string {
 		return nil
 	}
 	return fields[1:]
+}
+
+// Callback data helpers (Telegram limit: 64 bytes).
+const (
+	CallbackCheckPrefix = "c:"
+	CallbackMute1h      = "m:1h"
+)
+
+func CheckCallbackData(target string) (string, bool) {
+	data := CallbackCheckPrefix + target
+	if len(data) > 64 {
+		return "", false
+	}
+	return data, true
+}
+
+func ParseCheckCallback(data string) (target string, ok bool) {
+	if !strings.HasPrefix(data, CallbackCheckPrefix) {
+		return "", false
+	}
+	target = strings.TrimPrefix(data, CallbackCheckPrefix)
+	return target, target != ""
 }

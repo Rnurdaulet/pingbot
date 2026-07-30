@@ -1,6 +1,9 @@
 package telegram
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCommand(t *testing.T) {
 	t.Parallel()
@@ -24,5 +27,21 @@ func TestAllowedChat(t *testing.T) {
 	}
 	if c.AllowedChat(1) {
 		t.Fatal("expected denied")
+	}
+}
+
+func TestCheckCallbackData(t *testing.T) {
+	t.Parallel()
+	data, ok := CheckCallbackData("site-a")
+	if !ok || data != "c:site-a" {
+		t.Fatalf("got %q %v", data, ok)
+	}
+	target, ok := ParseCheckCallback(data)
+	if !ok || target != "site-a" {
+		t.Fatalf("parse got %q %v", target, ok)
+	}
+	long := strings.Repeat("x", 70)
+	if _, ok := CheckCallbackData(long); ok {
+		t.Fatal("expected reject oversized callback")
 	}
 }

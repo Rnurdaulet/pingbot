@@ -11,14 +11,16 @@ import (
 )
 
 type fakeNotifier struct {
-	mu   sync.Mutex
-	msgs []string
+	mu       sync.Mutex
+	msgs     []string
+	lastBtns [][]Button
 }
 
-func (f *fakeNotifier) Send(text string) error {
+func (f *fakeNotifier) SendMessage(msg Message) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.msgs = append(f.msgs, text)
+	f.msgs = append(f.msgs, msg.Text)
+	f.lastBtns = msg.Buttons
 	return nil
 }
 
@@ -80,6 +82,29 @@ func apply(m *Manager, t config.Target, results ...checker.Result) {
 func ok() checker.Result   { return checker.Result{Status: checker.OK, Latency: 100 * time.Millisecond} }
 func slow() checker.Result { return checker.Result{Status: checker.Slow, Latency: 2 * time.Second} }
 func fail() checker.Result { return checker.Result{Status: checker.Fail, Err: "connection refused"} }
+
+func TestDownAlertUsesHTMLAndButtons(t *testing.T) {
+	m, n, _ := newTestManager()
+	target := testTarget()
+
+	apply(m, target, fail(), fail(), fail())
+	// Capture last queued message via notifier after close.
+	m.Close()
+
+	msgs := n.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 alert, got %v", msgs)
+	}
+	if !strings.Contains(msgs[0], "<b>svc</b>") || !strings.Contains(msgs[0], "DOWN") {
+		t.Fatalf("expected HTML DOWN alert, got %q", msgs[0])
+	}
+	if len(n.lastBtns) != 1 || len(n.lastBtns[0]) != 2 {
+		t.Fatalf("expected Check+Mute buttons, got %#v", n.lastBtns)
+	}
+	if n.lastBtns[0][0].Data != "c:svc" || n.lastBtns[0][1].Data != "m:1h" {
+		t.Fatalf("unexpected button data: %#v", n.lastBtns[0])
+	}
+}
 
 func TestMuteSuppressesAlerts(t *testing.T) {
 	m, n, s := newTestManager()
