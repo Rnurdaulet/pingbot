@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rnurdaulet/pingbot/internal/report"
 	"github.com/Rnurdaulet/pingbot/internal/store"
 )
 
@@ -78,12 +79,6 @@ type statsResponse struct {
 	Targets     []targetStats `json:"targets"`
 }
 
-var statsWindows = map[string]time.Duration{
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
-
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	maxWindow := 30 * 24 * time.Hour
@@ -110,54 +105,22 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			Name:    st.Target,
 			Status:  st.Status,
 			Since:   st.UpdatedAt,
-			Windows: make(map[string]windowStats, len(statsWindows)),
+			Windows: make(map[string]windowStats, len(report.Windows)),
 		}
-		for label, d := range statsWindows {
-			ts.Windows[label] = aggregate(byTarget[st.Target], now, d)
+		for label, d := range report.Windows {
+			ws := report.Aggregate(byTarget[st.Target], now, d)
+			ts.Windows[label] = windowStats{
+				Downs:        ws.Downs,
+				Degradations: ws.Degradations,
+				DownSeconds:  ws.DownSeconds,
+				UptimePct:    ws.UptimePct,
+			}
 		}
 		resp.Targets = append(resp.Targets, ts)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-}
-
-func aggregate(incidents []store.IncidentRow, now time.Time, window time.Duration) windowStats {
-	windowStart := now.Add(-window)
-	var ws windowStats
-
-	for _, inc := range incidents {
-		end := now
-		if inc.EndedAt != nil {
-			end = inc.EndedAt.UTC()
-		}
-		if end.Before(windowStart) {
-			continue
-		}
-
-		switch inc.Kind {
-		case "down":
-			ws.Downs++
-			start := inc.StartedAt.UTC()
-			if start.Before(windowStart) {
-				start = windowStart
-			}
-			ws.DownSeconds += int64(end.Sub(start).Seconds())
-		case "degraded":
-			ws.Degradations++
-		}
-	}
-
-	total := window.Seconds()
-	ws.UptimePct = roundPct((total - float64(ws.DownSeconds)) / total * 100)
-	return ws
-}
-
-func roundPct(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	return float64(int(v*1000)) / 1000
 }
 
 func httpError(w http.ResponseWriter, err error) {

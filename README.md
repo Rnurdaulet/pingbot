@@ -71,6 +71,14 @@ The message should appear in the group. Note: by default bots in groups have "pr
 
 On start pingbot also sends a Telegram summary with each target and last-known status from the DB (`telegram.startup_notify`, default on). Set `require_on_start: true` to exit if that send fails.
 
+In the alerts chat you can also ask the bot (no domain needed):
+
+- `/status` — current status per target  
+- `/stats` (or `/history`) — uptime for 24h / 7d / 30d  
+- `/help` — command list  
+
+Only messages from `TELEGRAM_CHAT_ID` are answered.
+
 ### Heartbeat
 
 Put a [healthchecks.io](https://healthchecks.io) ping URL in `HEARTBEAT_URL`.

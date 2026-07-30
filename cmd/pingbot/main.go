@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/Rnurdaulet/pingbot/internal/checker"
 	"github.com/Rnurdaulet/pingbot/internal/config"
 	"github.com/Rnurdaulet/pingbot/internal/heartbeat"
+	"github.com/Rnurdaulet/pingbot/internal/report"
 	"github.com/Rnurdaulet/pingbot/internal/state"
 	"github.com/Rnurdaulet/pingbot/internal/store"
 	"github.com/Rnurdaulet/pingbot/internal/telegram"
@@ -83,6 +83,12 @@ func run(configPath string) error {
 		}
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runBotCommands(ctx, tg, cfg, db)
+	}()
+
 	slog.Info("pingbot started",
 		"targets", len(cfg.Targets),
 		"addr", cfg.Server.Addr,
@@ -101,21 +107,15 @@ func notifyStartup(tg *telegram.Client, cfg *config.Config, db *store.Store) err
 	if !cfg.Telegram.StartupNotifyEnabled() {
 		return nil
 	}
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = "unknown"
-	}
 
 	statuses := map[string]string{}
 	if rows, err := db.Statuses(); err != nil {
 		slog.Warn("startup status lookup failed", "error", err)
 	} else {
-		for _, r := range rows {
-			statuses[r.Target] = r.Status
-		}
+		statuses = report.StatusMap(rows)
 	}
 
-	msg := formatStartupMessage(host, cfg.Targets, statuses)
+	msg := report.FormatStartup(report.Hostname(), cfg.Targets, statuses)
 	if err := tg.Send(msg); err != nil {
 		if cfg.Telegram.RequireOnStart {
 			return fmt.Errorf("telegram require_on_start: %w", err)
@@ -123,32 +123,6 @@ func notifyStartup(tg *telegram.Client, cfg *config.Config, db *store.Store) err
 		slog.Error("telegram startup notify failed", "error", err)
 	}
 	return nil
-}
-
-func formatStartupMessage(host string, targets []config.Target, statuses map[string]string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "pingbot started · hostname=%s · targets=%d\n", host, len(targets))
-	for _, t := range targets {
-		st := statuses[t.Name]
-		if st == "" {
-			st = "unknown"
-		}
-		fmt.Fprintf(&b, "\n%s %s — %s", statusEmoji(st), t.Name, st)
-	}
-	return b.String()
-}
-
-func statusEmoji(status string) string {
-	switch status {
-	case "up":
-		return "🟢"
-	case "down":
-		return "🔴"
-	case "degraded":
-		return "🟡"
-	default:
-		return "⚪"
-	}
 }
 
 func runTarget(ctx context.Context, t config.Target, chk *checker.Checker, manager *state.Manager) {

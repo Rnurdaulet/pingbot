@@ -52,12 +52,23 @@ DOMAIN=status.example.com docker compose \
 
 Or publish `8080` only on localhost and terminate TLS yourself.
 
+## Telegram commands
+
+In the alerts chat (same `TELEGRAM_CHAT_ID`):
+
+- `/status` — current status  
+- `/stats` — uptime 24h / 7d / 30d  
+- `/help` — list commands  
+
+No public domain required (long polling).
+
 ## Upgrade
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
 
 ## Without Docker
 
