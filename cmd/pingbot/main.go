@@ -45,6 +45,10 @@ func run(configPath string) error {
 	defer db.Close()
 
 	tg := telegram.New(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	if err := notifyStartup(tg, cfg); err != nil {
+		return err
+	}
+
 	manager := state.NewManager(tg, db)
 	chk := checker.New()
 
@@ -89,6 +93,24 @@ func run(configPath string) error {
 	wg.Wait()
 	// Flush queued alerts before exiting.
 	manager.Close()
+	return nil
+}
+
+func notifyStartup(tg *telegram.Client, cfg *config.Config) error {
+	if !cfg.Telegram.StartupNotifyEnabled() {
+		return nil
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	msg := fmt.Sprintf("pingbot started · targets=%d · hostname=%s", len(cfg.Targets), host)
+	if err := tg.Send(msg); err != nil {
+		if cfg.Telegram.RequireOnStart {
+			return fmt.Errorf("telegram require_on_start: %w", err)
+		}
+		slog.Error("telegram startup notify failed", "error", err)
+	}
 	return nil
 }
 

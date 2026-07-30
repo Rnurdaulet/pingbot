@@ -69,6 +69,8 @@ curl -s -X POST "https://api.telegram.org/bot<TOKEN>/sendMessage" \
 
 The message should appear in the group. Note: by default bots in groups have "privacy mode" on — pingbot only sends messages, so this does not matter for alerts.
 
+On start pingbot also sends `pingbot started · targets=N · hostname=…` (`telegram.startup_notify`, default on). Set `require_on_start: true` to exit if that send fails.
+
 ### Heartbeat
 
 Put a [healthchecks.io](https://healthchecks.io) ping URL in `HEARTBEAT_URL`.

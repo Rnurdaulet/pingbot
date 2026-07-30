@@ -7,6 +7,8 @@ server:
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}
   chat_id: ${TELEGRAM_CHAT_ID}
+  startup_notify: true    # message on start (also checks Telegram works)
+  require_on_start: false # true = exit if startup notify fails
 
 # Dead man's switch: external service (healthchecks.io, etc.)
 # that alerts if pingbot itself dies and stops pinging.

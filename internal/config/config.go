@@ -36,8 +36,19 @@ type Server struct {
 }
 
 type Telegram struct {
-	BotToken string `yaml:"bot_token"`
-	ChatID   string `yaml:"chat_id"`
+	BotToken       string `yaml:"bot_token"`
+	ChatID         string `yaml:"chat_id"`
+	StartupNotify  *bool  `yaml:"startup_notify"`    // nil = true (send message on start)
+	RequireOnStart bool   `yaml:"require_on_start"`  // if true, failed startup notify exits
+}
+
+// StartupNotifyEnabled reports whether a Telegram message should be sent on start.
+// Omitted config defaults to enabled.
+func (t Telegram) StartupNotifyEnabled() bool {
+	if t.StartupNotify == nil {
+		return true
+	}
+	return *t.StartupNotify
 }
 
 type Heartbeat struct {
