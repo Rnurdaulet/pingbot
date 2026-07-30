@@ -99,8 +99,8 @@ func TestFormatStatusAndStats(t *testing.T) {
 	statusMsg := FormatStatus("srv-01", targets, statuses)
 	for _, part := range []string{
 		"pingbot status · hostname=srv-01 · targets=2",
-		"🟢 site-a — up",
-		"🔴 site-b — down",
+		"🟢 site-a · up",
+		"🔴 site-b · down",
 	} {
 		if !strings.Contains(statusMsg, part) {
 			t.Fatalf("status missing %q\n%s", part, statusMsg)
@@ -119,8 +119,8 @@ func TestFormatStatusAndStats(t *testing.T) {
 	statsMsg := FormatStats("srv-01", targets, statuses, incidents, now)
 	for _, part := range []string{
 		"pingbot stats · hostname=srv-01",
-		"🟢 site-a — up",
-		"🔴 site-b — down",
+		"🟢 site-a · up",
+		"🔴 site-b · down",
 		"24h:",
 		"7d:",
 		"30d:",

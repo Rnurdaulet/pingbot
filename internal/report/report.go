@@ -100,7 +100,7 @@ func FormatStatus(host string, targets []config.Target, statuses map[string]stri
 		if st == "" {
 			st = "unknown"
 		}
-		fmt.Fprintf(&b, "\n%s %s — %s", StatusEmoji(st), t.Name, st)
+		fmt.Fprintf(&b, "\n%s %s · %s", StatusEmoji(st), t.Name, st)
 	}
 	return b.String()
 }
@@ -113,7 +113,7 @@ func FormatStartup(host string, targets []config.Target, statuses map[string]str
 		if st == "" {
 			st = "unknown"
 		}
-		fmt.Fprintf(&b, "\n%s %s — %s", StatusEmoji(st), t.Name, st)
+		fmt.Fprintf(&b, "\n%s %s · %s", StatusEmoji(st), t.Name, st)
 	}
 	return b.String()
 }
@@ -314,7 +314,7 @@ func FormatStats(host string, targets []config.Target, statuses map[string]strin
 		if st == "" {
 			st = "unknown"
 		}
-		fmt.Fprintf(&b, "\n%s %s — %s", StatusEmoji(st), t.Name, st)
+		fmt.Fprintf(&b, "\n%s %s · %s", StatusEmoji(st), t.Name, st)
 		for _, label := range order {
 			ws := Aggregate(byTarget[t.Name], now, Windows[label])
 			fmt.Fprintf(&b, "\n  %s: uptime %.2f%% · down %d · slow %d",
