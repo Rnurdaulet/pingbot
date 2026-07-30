@@ -2,7 +2,9 @@ package report
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -112,6 +114,185 @@ func FormatStartup(host string, targets []config.Target, statuses map[string]str
 			st = "unknown"
 		}
 		fmt.Fprintf(&b, "\n%s %s — %s", StatusEmoji(st), t.Name, st)
+	}
+	return b.String()
+}
+
+func FormatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	mnt := (d % time.Hour) / time.Minute
+	s := (d % time.Minute) / time.Second
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %dm", h, mnt)
+	case mnt > 0:
+		return fmt.Sprintf("%dm %ds", mnt, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
+}
+
+func FormatIncidents(incidents []store.IncidentRow, limit int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "pingbot incidents · last %d downs\n", limit)
+	if len(incidents) == 0 {
+		b.WriteString("\n(none)")
+		return b.String()
+	}
+	for _, inc := range incidents {
+		end := "open"
+		dur := time.Since(inc.StartedAt).Round(time.Second)
+		if inc.EndedAt != nil {
+			end = inc.EndedAt.UTC().Format("15:04")
+			dur = inc.EndedAt.Sub(inc.StartedAt).Round(time.Second)
+		}
+		fmt.Fprintf(&b, "\n🔴 %s down\n  %s → %s (%s)",
+			inc.Target,
+			inc.StartedAt.UTC().Format("2006-01-02 15:04"),
+			end,
+			FormatDuration(dur),
+		)
+		if inc.Reason != "" {
+			fmt.Fprintf(&b, "\n  %s", inc.Reason)
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// FormatInfo renders a redacted config summary safe for Telegram.
+func FormatInfo(cfg *config.Config) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "pingbot info · hostname=%s\n", Hostname())
+
+	fmt.Fprintf(&b, "\nserver: %s", cfg.Server.Addr)
+	if cfg.Server.APIToken != "" {
+		b.WriteString(" · api_token=***")
+	} else {
+		b.WriteString(" · api_token=(empty)")
+	}
+
+	fmt.Fprintf(&b, "\ntelegram: chat_id=%s · bot_token=*** · startup_notify=%v · require_on_start=%v",
+		cfg.Telegram.ChatID,
+		cfg.Telegram.StartupNotifyEnabled(),
+		cfg.Telegram.RequireOnStart,
+	)
+
+	if cfg.Heartbeat.URL != "" {
+		fmt.Fprintf(&b, "\nheartbeat: %s · interval=%s", RedactURL(cfg.Heartbeat.URL), cfg.Heartbeat.Interval.Std())
+	} else {
+		b.WriteString("\nheartbeat: (off)")
+	}
+
+	switch cfg.Storage.Driver {
+	case "postgres":
+		b.WriteString("\nstorage: postgres · dsn=***")
+	default:
+		fmt.Fprintf(&b, "\nstorage: sqlite · path=%s", cfg.Storage.Path)
+	}
+
+	fmt.Fprintf(&b, "\ndefaults: interval=%s · timeout=%s · fail=%d · ok=%d",
+		cfg.Defaults.Interval.Std(),
+		cfg.Defaults.Timeout.Std(),
+		cfg.Defaults.FailThreshold,
+		cfg.Defaults.OkThreshold,
+	)
+
+	fmt.Fprintf(&b, "\n\ntargets (%d):", len(cfg.Targets))
+	for _, t := range cfg.Targets {
+		fmt.Fprintf(&b, "\n• %s\n  %s %s", t.Name, t.Method, RedactURL(t.URL))
+		if len(t.ExpectStatus) > 0 {
+			fmt.Fprintf(&b, "\n  expect=%v", t.ExpectStatus)
+		}
+		fmt.Fprintf(&b, "\n  interval=%s · timeout=%s · fail=%d · ok=%d",
+			t.Interval.Std(), t.Timeout.Std(), t.FailThreshold, t.OkThreshold)
+		if t.MaxLatencyMS > 0 {
+			fmt.Fprintf(&b, " · max_latency=%dms", t.MaxLatencyMS)
+		}
+		if hdrs := RedactHeaders(t.Headers); len(hdrs) > 0 {
+			keys := make([]string, 0, len(hdrs))
+			for k := range hdrs {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, fmt.Sprintf("%s=%s", k, hdrs[k]))
+			}
+			fmt.Fprintf(&b, "\n  headers: %s", strings.Join(parts, ", "))
+		}
+		if t.Body != "" {
+			b.WriteString("\n  body=(set, redacted)")
+		}
+	}
+	return b.String()
+}
+
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return "***"
+	}
+	if u.User != nil {
+		u.User = url.UserPassword("***", "***")
+	}
+	// Drop query/fragment — often contains tokens.
+	u.RawQuery = ""
+	u.Fragment = ""
+	if u.Path != "" && u.Path != "/" {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		for i, p := range parts {
+			// Long path segments are often tokens/UUIDs (e.g. healthchecks.io).
+			if len(p) >= 16 {
+				parts[i] = "***"
+			}
+		}
+		u.Path = "/" + strings.Join(parts, "/")
+	}
+	return u.String()
+}
+
+func RedactHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for k, v := range headers {
+		if sensitiveHeader(k) {
+			out[k] = "***"
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func sensitiveHeader(name string) bool {
+	n := strings.ToLower(name)
+	switch {
+	case n == "authorization", n == "proxy-authorization":
+		return true
+	case strings.Contains(n, "token"), strings.Contains(n, "secret"), strings.Contains(n, "password"), strings.Contains(n, "api-key"), strings.Contains(n, "apikey"), strings.Contains(n, "cookie"):
+		return true
+	default:
+		return false
+	}
+}
+
+func FormatCheck(name string, status string, statusCode int, latency time.Duration, errText string, maxLatencyMS int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "live check · %s\n\n", name)
+	switch status {
+	case "ok":
+		fmt.Fprintf(&b, "🟢 ok · %d · %dms", statusCode, latency.Milliseconds())
+	case "slow":
+		fmt.Fprintf(&b, "🟡 slow · %d · %dms (max %dms)", statusCode, latency.Milliseconds(), maxLatencyMS)
+	default:
+		fmt.Fprintf(&b, "🔴 fail · %dms", latency.Milliseconds())
+		if errText != "" {
+			fmt.Fprintf(&b, "\n%s", errText)
+		}
 	}
 	return b.String()
 }

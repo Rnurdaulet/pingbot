@@ -81,6 +81,22 @@ func ok() checker.Result   { return checker.Result{Status: checker.OK, Latency: 
 func slow() checker.Result { return checker.Result{Status: checker.Slow, Latency: 2 * time.Second} }
 func fail() checker.Result { return checker.Result{Status: checker.Fail, Err: "connection refused"} }
 
+func TestMuteSuppressesAlerts(t *testing.T) {
+	m, n, s := newTestManager()
+	target := testTarget()
+
+	m.Mute(time.Hour)
+	apply(m, target, fail(), fail(), fail())
+	m.Close()
+
+	if msgs := n.messages(); len(msgs) != 0 {
+		t.Fatalf("expected muted alerts, got %v", msgs)
+	}
+	if len(s.opened) != 1 || s.opened[0] != "down" {
+		t.Fatalf("mute must still record incidents, got %v", s.opened)
+	}
+}
+
 func TestDownAfterFailThreshold(t *testing.T) {
 	m, n, s := newTestManager()
 	target := testTarget()

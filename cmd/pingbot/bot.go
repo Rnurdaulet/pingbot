@@ -3,23 +3,31 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/Rnurdaulet/pingbot/internal/checker"
 	"github.com/Rnurdaulet/pingbot/internal/config"
 	"github.com/Rnurdaulet/pingbot/internal/report"
+	"github.com/Rnurdaulet/pingbot/internal/state"
 	"github.com/Rnurdaulet/pingbot/internal/store"
 	"github.com/Rnurdaulet/pingbot/internal/telegram"
 )
 
+const defaultIncidentLimit = 10
+
 type statusStore interface {
 	Statuses() ([]store.StatusRow, error)
 	IncidentsSince(since time.Time) ([]store.IncidentRow, error)
+	RecentDowns(limit int) ([]store.IncidentRow, error)
 }
 
-// runBotCommands long-polls Telegram for /status and /stats in the configured chat.
-func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config, db statusStore) {
+// runBotCommands long-polls Telegram for chat commands in the configured chat.
+func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config, db statusStore, chk *checker.Checker, manager *state.Manager) {
 	offset := 0
 	for {
 		if ctx.Err() != nil {
@@ -31,7 +39,6 @@ func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 				return
 			}
-			// Don't spin hot on network blips.
 			if !errors.Is(err, http.ErrHandlerTimeout) {
 				slog.Error("telegram getUpdates failed", "error", err)
 			}
@@ -52,15 +59,29 @@ func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config
 				continue
 			}
 
-			cmd := telegram.Command(u.Message.Text)
+			text := u.Message.Text
+			cmd := telegram.Command(text)
+			args := telegram.Args(text)
+
 			var reply string
 			switch cmd {
 			case "status", "start":
 				reply = buildStatusReply(cfg, db)
 			case "stats", "history":
 				reply = buildStatsReply(cfg, db)
+			case "incidents":
+				reply = buildIncidentsReply(db, args)
+			case "check":
+				reply = buildCheckReply(ctx, cfg, chk, args)
+			case "mute":
+				reply = buildMuteReply(manager, args)
+			case "unmute":
+				manager.Unmute()
+				reply = "alerts unmuted"
+			case "info":
+				reply = report.FormatInfo(cfg)
 			case "help":
-				reply = "commands:\n/status — current status\n/stats — uptime 24h / 7d / 30d"
+				reply = helpText()
 			default:
 				continue
 			}
@@ -70,6 +91,20 @@ func runBotCommands(ctx context.Context, tg *telegram.Client, cfg *config.Config
 			}
 		}
 	}
+}
+
+func helpText() string {
+	return strings.TrimSpace(`
+commands:
+/status — current status
+/stats — uptime 24h / 7d / 30d
+/incidents [N] — last N downs (default 10)
+/check <target> — live HTTP check
+/info — config summary (secrets redacted)
+/mute <duration> — silence alerts (e.g. 1h, 30m)
+/unmute — resume alerts
+/help — this list
+`)
 }
 
 func buildStatusReply(cfg *config.Config, db statusStore) string {
@@ -99,4 +134,73 @@ func buildStatsReply(cfg *config.Config, db statusStore) string {
 		return "pingbot stats: failed to read incidents"
 	}
 	return report.FormatStats(report.Hostname(), cfg.Targets, statuses, incidents, now)
+}
+
+func buildIncidentsReply(db statusStore, args []string) string {
+	limit := defaultIncidentLimit
+	if len(args) >= 1 {
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n <= 0 {
+			return "usage: /incidents [N]  (N = positive number)"
+		}
+		if n > 50 {
+			n = 50
+		}
+		limit = n
+	}
+	rows, err := db.RecentDowns(limit)
+	if err != nil {
+		slog.Error("incidents lookup failed", "error", err)
+		return "pingbot incidents: failed to read store"
+	}
+	return report.FormatIncidents(rows, limit)
+}
+
+func buildCheckReply(ctx context.Context, cfg *config.Config, chk *checker.Checker, args []string) string {
+	if len(args) < 1 {
+		return "usage: /check <target>"
+	}
+	name := args[0]
+	t, ok := findTarget(cfg.Targets, name)
+	if !ok {
+		return fmt.Sprintf("unknown target %q\nuse /status to list names", name)
+	}
+
+	r := chk.Check(ctx, t)
+	switch r.Status {
+	case checker.OK:
+		return report.FormatCheck(t.Name, "ok", r.StatusCode, r.Latency, "", t.MaxLatencyMS)
+	case checker.Slow:
+		return report.FormatCheck(t.Name, "slow", r.StatusCode, r.Latency, "", t.MaxLatencyMS)
+	default:
+		return report.FormatCheck(t.Name, "fail", r.StatusCode, r.Latency, r.Err, t.MaxLatencyMS)
+	}
+}
+
+func findTarget(targets []config.Target, name string) (config.Target, bool) {
+	for _, t := range targets {
+		if strings.EqualFold(t.Name, name) {
+			return t, true
+		}
+	}
+	return config.Target{}, false
+}
+
+func buildMuteReply(manager *state.Manager, args []string) string {
+	if len(args) < 1 {
+		if until, ok := manager.MuteInfo(); ok {
+			left := time.Until(until).Round(time.Second)
+			return fmt.Sprintf("alerts muted until %s UTC (%s left)\nusage: /mute <duration>  e.g. /mute 1h",
+				until.UTC().Format("15:04"), report.FormatDuration(left))
+		}
+		return "alerts are not muted\nusage: /mute <duration>  e.g. /mute 1h"
+	}
+
+	d, err := time.ParseDuration(args[0])
+	if err != nil || d <= 0 {
+		return "usage: /mute <duration>  e.g. 30m, 1h, 2h30m"
+	}
+	until := manager.Mute(d)
+	return fmt.Sprintf("alerts muted for %s (until %s UTC)",
+		report.FormatDuration(d), until.UTC().Format("15:04"))
 }

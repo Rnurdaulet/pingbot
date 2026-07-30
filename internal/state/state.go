@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Rnurdaulet/pingbot/internal/checker"
@@ -39,12 +40,13 @@ type tracker struct {
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	targets  map[string]*tracker
-	notifier Notifier
-	store    Store
-	alerts   chan string
-	done     chan struct{}
+	mu         sync.Mutex
+	targets    map[string]*tracker
+	notifier   Notifier
+	store      Store
+	alerts     chan string
+	done       chan struct{}
+	mutedUntil atomic.Int64 // unix nano; 0 = not muted
 }
 
 func NewManager(notifier Notifier, store Store) *Manager {
@@ -197,7 +199,40 @@ func (m *Manager) closeIncidents(target string) {
 	}
 }
 
+// Mute suppresses Telegram alerts until now+d. Status/incidents still update.
+func (m *Manager) Mute(d time.Duration) time.Time {
+	until := time.Now().Add(d)
+	m.mutedUntil.Store(until.UnixNano())
+	return until
+}
+
+func (m *Manager) Unmute() {
+	m.mutedUntil.Store(0)
+}
+
+// MuteInfo returns the mute deadline when alerts are currently suppressed.
+func (m *Manager) MuteInfo() (until time.Time, muted bool) {
+	nanos := m.mutedUntil.Load()
+	if nanos == 0 {
+		return time.Time{}, false
+	}
+	until = time.Unix(0, nanos)
+	if time.Now().After(until) {
+		return time.Time{}, false
+	}
+	return until, true
+}
+
+func (m *Manager) muted() bool {
+	_, ok := m.MuteInfo()
+	return ok
+}
+
 func (m *Manager) notify(text string) {
+	if m.muted() {
+		slog.Info("alert suppressed (muted)", "text", text)
+		return
+	}
 	select {
 	case m.alerts <- text:
 	default:

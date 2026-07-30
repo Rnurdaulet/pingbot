@@ -10,6 +10,10 @@ func TestCommand(t *testing.T) {
 	if got := Command("  /STATS  "); got != "stats" {
 		t.Fatalf("got %q", got)
 	}
+	args := Args("/check site-a")
+	if len(args) != 1 || args[0] != "site-a" {
+		t.Fatalf("args=%v", args)
+	}
 }
 
 func TestAllowedChat(t *testing.T) {

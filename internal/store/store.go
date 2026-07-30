@@ -199,6 +199,34 @@ func (s *Store) IncidentsSince(since time.Time) ([]IncidentRow, error) {
 	return out, rows.Err()
 }
 
+// RecentDowns returns the latest down incidents, newest first.
+func (s *Store) RecentDowns(limit int) ([]IncidentRow, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.Query(s.rebind(`
+		SELECT target, kind, COALESCE(reason, ''), started_at, ended_at
+		FROM incidents
+		WHERE kind = 'down'
+		ORDER BY started_at DESC
+		LIMIT ?
+	`), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []IncidentRow
+	for rows.Next() {
+		var r IncidentRow
+		if err := rows.Scan(&r.Target, &r.Kind, &r.Reason, &r.StartedAt, &r.EndedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }

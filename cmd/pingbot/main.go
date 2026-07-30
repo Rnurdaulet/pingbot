@@ -86,7 +86,7 @@ func run(configPath string) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runBotCommands(ctx, tg, cfg, db)
+		runBotCommands(ctx, tg, cfg, db, chk, manager)
 	}()
 
 	slog.Info("pingbot started",

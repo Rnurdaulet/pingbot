@@ -75,9 +75,13 @@ In the alerts chat you can also ask the bot (no domain needed):
 
 - `/status` — current status per target  
 - `/stats` (or `/history`) — uptime for 24h / 7d / 30d  
+- `/incidents [N]` — last N downs (default 10)  
+- `/check <target>` — live HTTP check now  
+- `/info` — config summary (tokens/auth redacted)  
+- `/mute 1h` / `/unmute` — silence alerts during maintenance  
 - `/help` — command list  
 
-Only messages from `TELEGRAM_CHAT_ID` are answered.
+Only messages from `TELEGRAM_CHAT_ID` are answered. Mute suppresses Telegram alerts only; checks and DB history keep running.
 
 ### Heartbeat
 

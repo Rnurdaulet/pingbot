@@ -58,6 +58,10 @@ In the alerts chat (same `TELEGRAM_CHAT_ID`):
 
 - `/status` — current status  
 - `/stats` — uptime 24h / 7d / 30d  
+- `/incidents [N]` — last N downs  
+- `/check <target>` — live check  
+- `/info` — config summary (secrets redacted)  
+- `/mute 1h` / `/unmute` — silence alerts  
 - `/help` — list commands  
 
 No public domain required (long polling).

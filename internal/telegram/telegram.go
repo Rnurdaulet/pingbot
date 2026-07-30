@@ -128,3 +128,12 @@ func Command(text string) string {
 	}
 	return strings.ToLower(cmd)
 }
+
+// Args returns space-separated arguments after the command.
+func Args(text string) []string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) <= 1 {
+		return nil
+	}
+	return fields[1:]
+}
