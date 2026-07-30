@@ -1,0 +1,23 @@
+# Prebuilt image — no Go toolchain, no source tree.
+# Docs: https://github.com/Rnurdaulet/pingbot/tree/master/deploy/standalone
+
+services:
+  pingbot:
+    image: ghcr.io/rnurdaulet/pingbot:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      - ./data:/data
+    # Behind a reverse proxy on the `proxy` network (recommended).
+    # For a quick local smoke test without a proxy, uncomment:
+    # ports:
+    #   - "8080:8080"
+    expose:
+      - "8080"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

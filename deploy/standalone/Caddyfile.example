@@ -1,0 +1,6 @@
+# Add this site block to your existing Caddy.
+# Caddy and the pingbot container must share the Docker network `proxy`.
+
+status.example.com {
+	reverse_proxy pingbot:8080
+}

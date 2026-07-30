@@ -11,6 +11,10 @@ Anti-flap thresholds, `up`/`down`/`degraded`, SQLite or Postgres history, option
 
 ## Run
 
+**Server without source** (prebuilt GHCR image only): copy [deploy/standalone/](deploy/standalone/) — compose, `config` / `.env` examples, Caddy snippet. See that folder's README.
+
+**From this repo** (build locally):
+
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
@@ -20,7 +24,7 @@ docker network create proxy   # once
 docker compose up -d --build
 ```
 
-Prebuilt image (after the first release): swap `build: .` for `image: ghcr.io/rnurdaulet/pingbot:latest` in `docker-compose.yml` — no toolchain needed.
+Or use the image: `image: ghcr.io/rnurdaulet/pingbot:latest` and drop `build: .`.
 
 Without Docker: `go build -o pingbot ./cmd/pingbot && ./pingbot -config config.yaml`, or grab a binary from [Releases](https://github.com/Rnurdaulet/pingbot/releases).
 
@@ -69,7 +73,7 @@ The message should appear in the group. Note: by default bots in groups have "pr
 
 Put a [healthchecks.io](https://healthchecks.io) ping URL in `HEARTBEAT_URL`.
 
-Proxy examples: [deploy/](deploy/). Compose does not publish `8080` — only the `proxy` network.
+Deploy pack: [deploy/standalone/](deploy/standalone/). Proxy snippets: [deploy/](deploy/). Compose does not publish `8080` — only the `proxy` network.
 
 ## Storage
 
