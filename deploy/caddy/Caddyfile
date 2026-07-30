@@ -1,0 +1,6 @@
+# Caddy obtains a TLS certificate for the domain automatically.
+# pingbot must be on the same Docker network (proxy).
+
+status.example.com {
+	reverse_proxy pingbot:8080
+}

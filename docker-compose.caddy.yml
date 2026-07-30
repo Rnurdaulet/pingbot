@@ -1,0 +1,28 @@
+# Overlay for servers that have no reverse proxy of their own.
+# Runs Caddy next to pingbot: listens on 80/443, obtains TLS automatically.
+#
+# Usage:
+#   docker network create proxy   # once
+#   DOMAIN=status.example.com docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+#
+# Without DOMAIN it serves https://localhost with a self-signed certificate.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/caddy/Caddyfile.bundled:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - proxy
+
+volumes:
+  caddy_data:
+  caddy_config:

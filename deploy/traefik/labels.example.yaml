@@ -1,0 +1,11 @@
+# Fragment for docker-compose.yml (Traefik): add labels to the pingbot service.
+# Traefik and pingbot must share the same Docker network (proxy).
+
+services:
+  pingbot:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pingbot.rule=Host(`status.example.com`)
+      - traefik.http.routers.pingbot.entrypoints=websecure
+      - traefik.http.routers.pingbot.tls.certresolver=letsencrypt
+      - traefik.http.services.pingbot.loadbalancer.server.port=8080

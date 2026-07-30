@@ -1,0 +1,50 @@
+server:
+  addr: ":8080"
+  # When set, /api/* requires "Authorization: Bearer <token>".
+  # Leave empty for internal-network deployments without auth.
+  api_token: ${PINGBOT_API_TOKEN}
+
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  chat_id: ${TELEGRAM_CHAT_ID}
+
+# Dead man's switch: external service (healthchecks.io, etc.)
+# that alerts if pingbot itself dies and stops pinging.
+heartbeat:
+  url: ${HEARTBEAT_URL}
+  interval: 60s
+
+# SQLite (default):
+storage:
+  driver: sqlite
+  path: data/pingbot.db
+
+# Or PostgreSQL (use sslmode=require in production):
+# storage:
+#   driver: postgres
+#   dsn: ${DATABASE_URL}   # postgres://user:pass@host:5432/pingbot?sslmode=require
+
+defaults:
+  interval: 30s
+  timeout: 5s
+  fail_threshold: 3   # consecutive fails before DOWN alert
+  ok_threshold: 2     # consecutive oks before UP alert
+
+targets:
+  - name: api-health
+    url: https://api.example.com/health
+    method: GET
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    expect_status: [200]
+    max_latency_ms: 1000
+
+  - name: create-ping
+    url: https://api.example.com/ping
+    method: POST
+    headers:
+      Content-Type: application/json
+      Authorization: "Bearer ${API_TOKEN}"
+    body: '{"ok":true}'
+    expect_status: [200, 201]
+    interval: 2m

@@ -1,0 +1,23 @@
+services:
+  pingbot:
+    # To use the prebuilt image instead of building from source,
+    # remove `build:` and set: image: ghcr.io/rnurdaulet/pingbot:latest
+    build: .
+    image: pingbot:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      - ./data:/data
+    # Do not publish the port — access via reverse proxy on the `proxy` network.
+    # For local access without a proxy, uncomment:
+    # ports:
+    #   - "8080:8080"
+    expose:
+      - "8080"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

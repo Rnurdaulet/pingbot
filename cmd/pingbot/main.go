@@ -1,0 +1,108 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+
+	"github.com/Rnurdaulet/pingbot/internal/api"
+	"github.com/Rnurdaulet/pingbot/internal/checker"
+	"github.com/Rnurdaulet/pingbot/internal/config"
+	"github.com/Rnurdaulet/pingbot/internal/heartbeat"
+	"github.com/Rnurdaulet/pingbot/internal/state"
+	"github.com/Rnurdaulet/pingbot/internal/store"
+	"github.com/Rnurdaulet/pingbot/internal/telegram"
+)
+
+func main() {
+	configPath := flag.String("config", "config.yaml", "path to config file")
+	flag.Parse()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+
+	if err := run(*configPath); err != nil {
+		slog.Error("pingbot exited with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	db, err := store.Open(cfg.Storage)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	tg := telegram.New(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	manager := state.NewManager(tg, db)
+	chk := checker.New()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+
+	for _, target := range cfg.Targets {
+		wg.Add(1)
+		go func(t config.Target) {
+			defer wg.Done()
+			runTarget(ctx, t, chk, manager)
+		}(target)
+	}
+
+	if cfg.Heartbeat.URL != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			heartbeat.Run(ctx, cfg.Heartbeat.URL, cfg.Heartbeat.Interval.Std())
+		}()
+	}
+
+	srv := api.NewServer(cfg.Server.Addr, cfg.Server.APIToken, db)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := srv.Run(ctx); err != nil {
+			slog.Error("http server stopped", "error", err)
+		}
+	}()
+
+	slog.Info("pingbot started",
+		"targets", len(cfg.Targets),
+		"addr", cfg.Server.Addr,
+		"heartbeat", cfg.Heartbeat.URL != "",
+	)
+
+	<-ctx.Done()
+	slog.Info("shutting down")
+	wg.Wait()
+	// Flush queued alerts before exiting.
+	manager.Close()
+	return nil
+}
+
+func runTarget(ctx context.Context, t config.Target, chk *checker.Checker, manager *state.Manager) {
+	ticker := newImmediateTicker(t.Interval.Std())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C():
+			result := chk.Check(ctx, t)
+			manager.Apply(t, result)
+		}
+	}
+}

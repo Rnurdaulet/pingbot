@@ -1,0 +1,8 @@
+/pingbot
+/data/
+.env
+config.yaml
+*.db
+.DS_Store
+.idea/
+.vscode/

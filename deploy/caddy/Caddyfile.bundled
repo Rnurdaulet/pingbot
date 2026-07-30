@@ -1,0 +1,8 @@
+# Caddyfile for the bundled Caddy (docker-compose.caddy.yml).
+# The domain comes from the DOMAIN environment variable.
+# A real domain gets a Let's Encrypt certificate automatically;
+# "localhost" gets a self-signed one.
+
+{$DOMAIN:localhost} {
+	reverse_proxy pingbot:8080
+}
