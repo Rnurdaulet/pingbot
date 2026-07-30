@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -45,7 +46,7 @@ func run(configPath string) error {
 	defer db.Close()
 
 	tg := telegram.New(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
-	if err := notifyStartup(tg, cfg); err != nil {
+	if err := notifyStartup(tg, cfg, db); err != nil {
 		return err
 	}
 
@@ -96,7 +97,7 @@ func run(configPath string) error {
 	return nil
 }
 
-func notifyStartup(tg *telegram.Client, cfg *config.Config) error {
+func notifyStartup(tg *telegram.Client, cfg *config.Config, db *store.Store) error {
 	if !cfg.Telegram.StartupNotifyEnabled() {
 		return nil
 	}
@@ -104,7 +105,17 @@ func notifyStartup(tg *telegram.Client, cfg *config.Config) error {
 	if err != nil || host == "" {
 		host = "unknown"
 	}
-	msg := fmt.Sprintf("pingbot started · targets=%d · hostname=%s", len(cfg.Targets), host)
+
+	statuses := map[string]string{}
+	if rows, err := db.Statuses(); err != nil {
+		slog.Warn("startup status lookup failed", "error", err)
+	} else {
+		for _, r := range rows {
+			statuses[r.Target] = r.Status
+		}
+	}
+
+	msg := formatStartupMessage(host, cfg.Targets, statuses)
 	if err := tg.Send(msg); err != nil {
 		if cfg.Telegram.RequireOnStart {
 			return fmt.Errorf("telegram require_on_start: %w", err)
@@ -112,6 +123,32 @@ func notifyStartup(tg *telegram.Client, cfg *config.Config) error {
 		slog.Error("telegram startup notify failed", "error", err)
 	}
 	return nil
+}
+
+func formatStartupMessage(host string, targets []config.Target, statuses map[string]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "pingbot started · hostname=%s · targets=%d\n", host, len(targets))
+	for _, t := range targets {
+		st := statuses[t.Name]
+		if st == "" {
+			st = "unknown"
+		}
+		fmt.Fprintf(&b, "\n%s %s — %s", statusEmoji(st), t.Name, st)
+	}
+	return b.String()
+}
+
+func statusEmoji(status string) string {
+	switch status {
+	case "up":
+		return "🟢"
+	case "down":
+		return "🔴"
+	case "degraded":
+		return "🟡"
+	default:
+		return "⚪"
+	}
 }
 
 func runTarget(ctx context.Context, t config.Target, chk *checker.Checker, manager *state.Manager) {
