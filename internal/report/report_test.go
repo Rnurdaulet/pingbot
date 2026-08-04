@@ -41,6 +41,7 @@ func TestFormatInfoRedactsSecrets(t *testing.T) {
 			FailThreshold: 3,
 			OkThreshold:   2,
 			MaxLatencyMS:  1000,
+			SSLWarnDays:   14,
 		}},
 	}
 
@@ -59,6 +60,7 @@ func TestFormatInfoRedactsSecrets(t *testing.T) {
 		"GET https://api.example.com/health",
 		"body=(set, redacted)",
 		"dsn=***",
+		"ssl_warn_days=14",
 	} {
 		if !strings.Contains(msg, part) {
 			t.Fatalf("missing %q in:\n%s", part, msg)

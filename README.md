@@ -46,6 +46,7 @@ See [config.example.yaml](config.example.yaml). `${VAR}` expands from the enviro
 | `expect_status` | `[200]` | |
 | `interval` / `timeout` | `30s` / `5s` | |
 | `max_latency_ms` | off | slower → `degraded` |
+| `ssl_warn_days` | off | HTTPS only; cert within N days → `degraded`, expired → `down` |
 | `fail_threshold` / `ok_threshold` | `3` / `2` | anti-flap |
 
 ### Telegram setup

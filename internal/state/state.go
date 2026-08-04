@@ -172,7 +172,10 @@ func (m *Manager) transitionDegraded(t config.Target, tr *tracker, r checker.Res
 	tr.slowSince = time.Now()
 
 	m.persistStatus(t.Name, Degraded)
-	reason := fmt.Sprintf("latency %dms > %dms", r.Latency.Milliseconds(), t.MaxLatencyMS)
+	reason := r.Err
+	if reason == "" {
+		reason = fmt.Sprintf("latency %dms > %dms", r.Latency.Milliseconds(), t.MaxLatencyMS)
+	}
 	if err := m.store.OpenIncident(t.Name, string(Degraded), reason, tr.slowSince); err != nil {
 		slog.Error("store open incident", "target", t.Name, "error", err)
 	}

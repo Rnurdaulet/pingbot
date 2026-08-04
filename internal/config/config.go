@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -79,6 +80,7 @@ type Target struct {
 	Interval      Duration          `yaml:"interval"`
 	Timeout       Duration          `yaml:"timeout"`
 	MaxLatencyMS  int               `yaml:"max_latency_ms"`
+	SSLWarnDays   int               `yaml:"ssl_warn_days"` // 0 = off; warn when cert expires within N days
 	FailThreshold int               `yaml:"fail_threshold"`
 	OkThreshold   int               `yaml:"ok_threshold"`
 }
@@ -186,6 +188,15 @@ func (c *Config) validate() error {
 			return fmt.Errorf("duplicate target name %q", t.Name)
 		}
 		seen[t.Name] = true
+		if t.SSLWarnDays < 0 {
+			return fmt.Errorf("target %q: ssl_warn_days must be >= 0", t.Name)
+		}
+		if t.SSLWarnDays > 0 {
+			u, err := url.Parse(t.URL)
+			if err != nil || u.Scheme != "https" {
+				return fmt.Errorf("target %q: ssl_warn_days requires an https url", t.Name)
+			}
+		}
 	}
 	return nil
 }

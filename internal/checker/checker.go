@@ -29,11 +29,13 @@ type Result struct {
 
 type Checker struct {
 	client *http.Client
+	now    func() time.Time
 }
 
 func New() *Checker {
 	return &Checker{
 		client: &http.Client{Timeout: 30 * time.Second},
+		now:    time.Now,
 	}
 }
 
@@ -73,9 +75,58 @@ func (c *Checker) Check(ctx context.Context, t config.Target) Result {
 		}
 	}
 
+	if certErr := c.checkSSL(t, resp); certErr != nil {
+		return Result{
+			Status:     certErr.status,
+			Latency:    latency,
+			StatusCode: resp.StatusCode,
+			Err:        certErr.err,
+		}
+	}
+
 	if t.MaxLatencyMS > 0 && latency > time.Duration(t.MaxLatencyMS)*time.Millisecond {
 		return Result{Status: Slow, Latency: latency, StatusCode: resp.StatusCode}
 	}
 
 	return Result{Status: OK, Latency: latency, StatusCode: resp.StatusCode}
+}
+
+type sslResult struct {
+	status Status
+	err    string
+}
+
+func (c *Checker) checkSSL(t config.Target, resp *http.Response) *sslResult {
+	if t.SSLWarnDays <= 0 {
+		return nil
+	}
+	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+		return &sslResult{status: Fail, err: "ssl cert missing"}
+	}
+
+	now := c.now()
+	notAfter := resp.TLS.PeerCertificates[0].NotAfter
+	if !notAfter.After(now) {
+		return &sslResult{
+			status: Fail,
+			err:    fmt.Sprintf("ssl cert expired (%s)", notAfter.UTC().Format("2006-01-02")),
+		}
+	}
+
+	warnUntil := now.Add(time.Duration(t.SSLWarnDays) * 24 * time.Hour)
+	if !notAfter.After(warnUntil) {
+		remaining := notAfter.Sub(now)
+		days := int(remaining.Hours() / 24)
+		if days < 1 {
+			return &sslResult{
+				status: Slow,
+				err:    fmt.Sprintf("ssl cert expires in <1d (%s)", notAfter.UTC().Format("2006-01-02")),
+			}
+		}
+		return &sslResult{
+			status: Slow,
+			err:    fmt.Sprintf("ssl cert expires in %dd (%s)", days, notAfter.UTC().Format("2006-01-02")),
+		}
+	}
+	return nil
 }

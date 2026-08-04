@@ -210,6 +210,9 @@ func FormatInfo(cfg *config.Config) string {
 		if t.MaxLatencyMS > 0 {
 			fmt.Fprintf(&b, " · max_latency=%dms", t.MaxLatencyMS)
 		}
+		if t.SSLWarnDays > 0 {
+			fmt.Fprintf(&b, " · ssl_warn_days=%d", t.SSLWarnDays)
+		}
 		if hdrs := RedactHeaders(t.Headers); len(hdrs) > 0 {
 			keys := make([]string, 0, len(hdrs))
 			for k := range hdrs {

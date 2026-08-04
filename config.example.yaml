@@ -40,6 +40,7 @@ targets:
       Authorization: "Bearer ${API_TOKEN}"
     expect_status: [200]
     max_latency_ms: 1000
+    ssl_warn_days: 14   # degraded when cert expires within N days; 0/omit = off
 
   - name: create-ping
     url: https://api.example.com/ping

@@ -200,8 +200,32 @@ func TestDegradedOnSlowResponses(t *testing.T) {
 	if !strings.Contains(msgs[0], "SLOW") {
 		t.Fatalf("unexpected alert: %q", msgs[0])
 	}
+	if !strings.Contains(msgs[0], "latency") {
+		t.Fatalf("expected latency reason, got %q", msgs[0])
+	}
 	if len(s.opened) != 1 || s.opened[0] != "degraded" {
 		t.Fatalf("expected one degraded incident, got %v", s.opened)
+	}
+}
+
+func TestDegradedUsesResultErrReason(t *testing.T) {
+	m, n, _ := newTestManager()
+	target := testTarget()
+
+	certSlow := checker.Result{
+		Status:  checker.Slow,
+		Latency: 50 * time.Millisecond,
+		Err:     "ssl cert expires in 5d (2026-08-09)",
+	}
+	apply(m, target, ok(), certSlow, certSlow, certSlow)
+	m.Close()
+
+	msgs := n.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 SLOW alert, got %d: %v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0], "ssl cert expires in 5d") {
+		t.Fatalf("expected cert reason in alert, got %q", msgs[0])
 	}
 }
 
