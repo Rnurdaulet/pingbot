@@ -35,6 +35,17 @@ Compose does **not** publish `8080` by default — put a reverse proxy on the
 `proxy` network in front (see `Caddyfile.example`). For a local smoke test,
 uncomment `ports` in `docker-compose.yml`.
 
+### File permissions
+
+The container runs as `nonroot` (uid 65532). It must be able to read
+`config.yaml` and write `data/`. If you keep them private to your user
+(e.g. `chmod 660`), `pingbot` exits with `open /config.yaml: permission denied`.
+Uncomment `user:` in `docker-compose.yml` with the files' owner
+(`id -u`:`id -g`, usually `1000:1000`).
+
+The config is read only at start, so a permission change shows up on the next
+restart or upgrade, not right away.
+
 ### Already have Caddy?
 
 Do **not** start a second Caddy. Join your Caddy container to `proxy` and add
@@ -75,6 +86,9 @@ docker compose pull
 docker compose up -d
 ```
 
+`:latest` is rebuilt only when a `v*` release tag is pushed. After `up -d`,
+check `docker compose logs --tail 20` — see [File permissions](#file-permissions)
+if it keeps restarting.
 
 ## Without Docker
 

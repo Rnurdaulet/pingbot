@@ -5,6 +5,9 @@ services:
   pingbot:
     image: ghcr.io/rnurdaulet/pingbot:latest
     restart: unless-stopped
+    # The image runs as nonroot (uid 65532). If config.yaml / data/ are not
+    # readable by it (e.g. chmod 660, owned by your user), run as their owner:
+    # user: "1000:1000"
     env_file: .env
     volumes:
       - ./config.yaml:/config.yaml:ro
