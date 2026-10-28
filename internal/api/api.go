@@ -31,7 +31,7 @@ func NewServer(addr, apiToken string, db StatsStore) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /api/stats", s.requireToken(s.handleStats))
 
@@ -120,7 +120,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("stats encode failed", "error", err)
+	}
 }
 
 func httpError(w http.ResponseWriter, err error) {

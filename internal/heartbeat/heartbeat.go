@@ -22,7 +22,7 @@ func Run(ctx context.Context, url string, interval time.Duration) {
 			slog.Warn("heartbeat ping failed", "error", err)
 			return
 		}
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
 		resp.Body.Close()
 	}
 

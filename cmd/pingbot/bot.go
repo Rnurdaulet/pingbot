@@ -109,8 +109,8 @@ func handleCallback(ctx context.Context, tg *telegram.Client, cfg *config.Config
 		return
 	}
 
-	switch {
-	case cb.Data == telegram.CallbackMute1h:
+	switch cb.Data {
+	case telegram.CallbackMute1h:
 		until := manager.Mute(time.Hour)
 		_ = tg.AnswerCallback(cb.ID, "muted 1h")
 		msg := fmt.Sprintf("alerts muted for 1h (until %s UTC)", until.UTC().Format("15:04"))
@@ -148,25 +148,23 @@ DOWN alerts include Check and Mute 1h buttons.
 }
 
 func buildStatusReply(cfg *config.Config, db statusStore) string {
-	statuses := map[string]string{}
-	if rows, err := db.Statuses(); err != nil {
+	rows, err := db.Statuses()
+	if err != nil {
 		slog.Error("status lookup failed", "error", err)
 		return "pingbot status: failed to read store"
-	} else {
-		statuses = report.StatusMap(rows)
 	}
+	statuses := report.StatusMap(rows)
 	return report.FormatStatus(report.Hostname(), cfg.Targets, statuses)
 }
 
 func buildStatsReply(cfg *config.Config, db statusStore) string {
 	now := time.Now().UTC()
-	statuses := map[string]string{}
-	if rows, err := db.Statuses(); err != nil {
+	rows, err := db.Statuses()
+	if err != nil {
 		slog.Error("stats status lookup failed", "error", err)
 		return "pingbot stats: failed to read store"
-	} else {
-		statuses = report.StatusMap(rows)
 	}
+	statuses := report.StatusMap(rows)
 
 	incidents, err := db.IncidentsSince(now.Add(-30 * 24 * time.Hour))
 	if err != nil {

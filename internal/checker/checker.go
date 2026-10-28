@@ -87,7 +87,7 @@ func (c *Checker) Check(ctx context.Context, t config.Target) Result {
 	}
 	defer resp.Body.Close()
 	// Drain so the connection can be reused.
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 
 	if !slices.Contains(t.ExpectStatus, resp.StatusCode) {
 		return Result{
