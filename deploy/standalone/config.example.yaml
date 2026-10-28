@@ -39,6 +39,7 @@ targets:
     headers:
       Authorization: "Bearer ${API_TOKEN}"
     expect_status: [200]
+    # follow_redirects: false  # default true; false when unset and expect_status includes a 3xx
     max_latency_ms: 1000
     ssl_warn_days: 14   # degraded when cert expires within N days; 0/omit = off
 

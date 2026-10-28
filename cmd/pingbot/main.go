@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Rnurdaulet/pingbot/internal/api"
 	"github.com/Rnurdaulet/pingbot/internal/checker"
@@ -54,6 +55,7 @@ func run(configPath string) error {
 	}
 
 	manager := state.NewManager(tg, db)
+	restoreState(manager, cfg, db)
 	chk := checker.New()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -104,6 +106,50 @@ func run(configPath string) error {
 	// Flush queued alerts before exiting.
 	manager.Close()
 	return nil
+}
+
+// restoreState seeds trackers from the last status and open incidents.
+// since is the latest open incident of that kind, or the status row's updated_at.
+// A load error is logged and startup continues.
+func restoreState(manager *state.Manager, cfg *config.Config, db *store.Store) {
+	statuses, err := db.Statuses()
+	if err != nil {
+		slog.Warn("restore statuses failed", "error", err)
+		return
+	}
+	open, err := db.OpenIncidents()
+	if err != nil {
+		slog.Warn("restore open incidents failed", "error", err)
+		open = nil
+	}
+
+	byName := make(map[string]store.StatusRow, len(statuses))
+	for _, row := range statuses {
+		byName[row.Target] = row
+	}
+
+	for _, target := range cfg.Targets {
+		row, ok := byName[target.Name]
+		if !ok {
+			continue
+		}
+		since := row.UpdatedAt
+		var latest time.Time
+		found := false
+		for _, inc := range open {
+			if inc.Target != target.Name || inc.Kind != row.Status {
+				continue
+			}
+			if !found || inc.StartedAt.After(latest) {
+				latest = inc.StartedAt
+				found = true
+			}
+		}
+		if found {
+			since = latest
+		}
+		manager.Restore(target.Name, state.Status(row.Status), since)
+	}
 }
 
 func notifyStartup(tg *telegram.Client, cfg *config.Config, db *store.Store) error {

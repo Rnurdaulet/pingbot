@@ -199,6 +199,30 @@ func (s *Store) IncidentsSince(since time.Time) ([]IncidentRow, error) {
 	return out, rows.Err()
 }
 
+// OpenIncidents returns incidents that have not ended, oldest first.
+func (s *Store) OpenIncidents() ([]IncidentRow, error) {
+	rows, err := s.db.Query(s.rebind(`
+		SELECT target, kind, COALESCE(reason, ''), started_at, ended_at
+		FROM incidents
+		WHERE ended_at IS NULL
+		ORDER BY started_at
+	`))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []IncidentRow
+	for rows.Next() {
+		var r IncidentRow
+		if err := rows.Scan(&r.Target, &r.Kind, &r.Reason, &r.StartedAt, &r.EndedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // RecentDowns returns the latest down incidents, newest first.
 func (s *Store) RecentDowns(limit int) ([]IncidentRow, error) {
 	if limit <= 0 {

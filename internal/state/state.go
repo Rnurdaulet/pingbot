@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +46,9 @@ type Manager struct {
 	alerts     chan Message
 	done       chan struct{}
 	mutedUntil atomic.Int64 // unix nano; 0 = not muted
+	suppressed bool         // an alert was dropped during the current mute
+	muteTimer  *time.Timer
+	closed     bool
 }
 
 func NewManager(notifier Notifier, store Store) *Manager {
@@ -70,10 +75,38 @@ func (m *Manager) senderLoop() {
 	}
 }
 
-// Close flushes queued alerts and stops the sender goroutine.
+// Close stops the mute timer, flushes queued alerts, and stops the sender.
 func (m *Manager) Close() {
+	m.mu.Lock()
+	m.stopMuteTimerLocked()
+	m.closed = true
+	m.mu.Unlock()
+
 	close(m.alerts)
 	<-m.done
+}
+
+// Restore seeds a tracker before checks start.
+// Down keeps downSince, degraded keeps slowSince, up is healthy.
+// Any other status is ignored and the target stays unknown.
+func (m *Manager) Restore(target string, status Status, since time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	tr := &tracker{}
+	switch status {
+	case Down:
+		tr.status = Down
+		tr.downSince = since
+	case Degraded:
+		tr.status = Degraded
+		tr.slowSince = since
+	case Up:
+		tr.status = Up
+	default:
+		return
+	}
+	m.targets[target] = tr
 }
 
 func (m *Manager) Apply(t config.Target, r checker.Result) {
@@ -127,6 +160,7 @@ func (m *Manager) Apply(t config.Target, r checker.Result) {
 		case Unknown:
 			tr.status = Up
 			m.persistStatus(t.Name, Up)
+			m.closeIncidents(t.Name)
 		}
 	}
 }
@@ -223,15 +257,85 @@ func (m *Manager) closeIncidents(target string) {
 	}
 }
 
-// Mute suppresses Telegram alerts until now+d. Status/incidents still update.
+// Mute suppresses Telegram alerts until now+d. Status and incidents still update.
+// Alerts dropped while muted are summarized once when the mute ends.
 func (m *Manager) Mute(d time.Duration) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	until := time.Now().Add(d)
-	m.mutedUntil.Store(until.UnixNano())
+	deadline := until.UnixNano()
+	m.mutedUntil.Store(deadline)
+	m.stopMuteTimerLocked()
+	m.muteTimer = time.AfterFunc(d, func() { m.onMuteDeadline(deadline) })
 	return until
 }
 
+// Unmute resumes alerts. If any were suppressed, one summary is queued.
 func (m *Manager) Unmute() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.mutedUntil.Store(0)
+	m.stopMuteTimerLocked()
+	m.flushSuppressedLocked()
+}
+
+func (m *Manager) onMuteDeadline(deadline int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mutedUntil.Load() != deadline {
+		return
+	}
+	m.mutedUntil.Store(0)
+	// Already running; don't Stop from inside the callback.
+	m.muteTimer = nil
+	m.flushSuppressedLocked()
+}
+
+func (m *Manager) stopMuteTimerLocked() {
+	if m.muteTimer != nil {
+		m.muteTimer.Stop()
+		m.muteTimer = nil
+	}
+}
+
+// flushSuppressedLocked queues one summary when an alert was dropped.
+// Caller holds m.mu. A newer mute (mutedUntil still set) keeps the flag.
+func (m *Manager) flushSuppressedLocked() {
+	if m.closed || !m.suppressed || m.muted() {
+		return
+	}
+	m.suppressed = false
+	m.enqueueLocked(m.muteSummaryLocked())
+}
+
+func (m *Manager) muteSummaryLocked() Message {
+	names := make([]string, 0, len(m.targets))
+	for name, tr := range m.targets {
+		if tr.status == Down || tr.status == Degraded {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString("🔔 mute ended")
+	if len(names) == 0 {
+		b.WriteString("\nall targets up")
+	} else {
+		for _, name := range names {
+			tr := m.targets[name]
+			switch tr.status {
+			case Down:
+				fmt.Fprintf(&b, "\n🔴 <b>%s</b> down for %s",
+					html.EscapeString(name), formatDuration(time.Since(tr.downSince)))
+			case Degraded:
+				fmt.Fprintf(&b, "\n🟡 <b>%s</b> slow for %s",
+					html.EscapeString(name), formatDuration(time.Since(tr.slowSince)))
+			}
+		}
+	}
+	return Message{Text: b.String(), HTML: true}
 }
 
 // MuteInfo returns the mute deadline when alerts are currently suppressed.
@@ -252,9 +356,21 @@ func (m *Manager) muted() bool {
 	return ok
 }
 
+// notify delivers an alert, or remembers that it was dropped while muted.
+// Caller holds m.mu.
 func (m *Manager) notify(msg Message) {
 	if m.muted() {
+		m.suppressed = true
 		slog.Info("alert suppressed (muted)", "text", msg.Text)
+		return
+	}
+	m.enqueueLocked(msg)
+}
+
+// enqueueLocked queues an alert. Caller holds m.mu.
+// After Close the send is skipped so a late timer cannot panic.
+func (m *Manager) enqueueLocked(msg Message) {
+	if m.closed {
 		return
 	}
 	select {

@@ -15,19 +15,29 @@ import (
 	"github.com/Rnurdaulet/pingbot/internal/state"
 )
 
+const (
+	defaultBaseURL  = "https://api.telegram.org"
+	maxSendAttempts = 3
+	maxRetryAfter   = 30 * time.Second
+)
+
 type Client struct {
-	token  string
-	chatID string
-	http   *http.Client
-	long   *http.Client // for long-polling getUpdates
+	token   string
+	chatID  string
+	http    *http.Client
+	long    *http.Client // for long-polling getUpdates
+	baseURL string       // API root; default https://api.telegram.org
+	sleep   func(time.Duration)
 }
 
 func New(token, chatID string) *Client {
 	return &Client{
-		token:  token,
-		chatID: chatID,
-		http:   &http.Client{Timeout: 10 * time.Second},
-		long:   &http.Client{Timeout: 45 * time.Second},
+		token:   token,
+		chatID:  chatID,
+		http:    &http.Client{Timeout: 10 * time.Second},
+		long:    &http.Client{Timeout: 45 * time.Second},
+		baseURL: defaultBaseURL,
+		sleep:   time.Sleep,
 	}
 }
 
@@ -101,28 +111,97 @@ func (c *Client) AnswerCallback(callbackID, text string) error {
 	return c.postJSON("answerCallbackQuery", payload)
 }
 
+func (c *Client) apiBase() string {
+	base := c.baseURL
+	if base == "" {
+		base = defaultBaseURL
+	}
+	return strings.TrimRight(base, "/")
+}
+
+func (c *Client) sleepFor(d time.Duration) {
+	if c.sleep != nil {
+		c.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// postJSON posts payload. Network errors, HTTP 429, and HTTP 5xx are retried
+// (3 attempts). Other 4xx responses are returned immediately.
 func (c *Client) postJSON(method string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
+	apiURL := fmt.Sprintf("%s/bot%s/%s", c.apiBase(), c.token, method)
+
+	var lastErr error
+	for attempt := 1; attempt <= maxSendAttempts; attempt++ {
+		status, respBody, reqErr := c.doPost(apiURL, body)
+		switch {
+		case reqErr != nil:
+			lastErr = fmt.Errorf("telegram %s: %w", method, reqErr)
+		case status != http.StatusOK:
+			lastErr = fmt.Errorf("telegram %s status %d: %s", method, status, respBody)
+		default:
+			return nil
+		}
+		if attempt == maxSendAttempts || !retryable(status, reqErr) {
+			return lastErr
+		}
+		c.sleepFor(retryDelay(status, respBody, attempt))
+	}
+	return lastErr
+}
+
+func (c *Client) doPost(apiURL string, body []byte) (int, []byte, error) {
 	resp, err := c.http.Post(apiURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("telegram %s status %d: %s", method, resp.StatusCode, b)
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	return resp.StatusCode, b, nil
+}
+
+func retryable(status int, reqErr error) bool {
+	if reqErr != nil {
+		return true
 	}
-	return nil
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+// retryDelay is retry_after (capped at 30s) for 429, otherwise 1s then 2s.
+func retryDelay(status int, body []byte, attempt int) time.Duration {
+	if status == http.StatusTooManyRequests {
+		if d, ok := retryAfter(body); ok {
+			return d
+		}
+	}
+	return time.Duration(attempt) * time.Second
+}
+
+func retryAfter(body []byte) (time.Duration, bool) {
+	var parsed struct {
+		Parameters struct {
+			RetryAfter int `json:"retry_after"`
+		} `json:"parameters"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Parameters.RetryAfter <= 0 {
+		return 0, false
+	}
+	d := time.Duration(parsed.Parameters.RetryAfter) * time.Second
+	if d > maxRetryAfter {
+		d = maxRetryAfter
+	}
+	return d, true
 }
 
 type Update struct {
-	UpdateID      int             `json:"update_id"`
-	Message       *MessageUpdate  `json:"message"`
-	CallbackQuery *CallbackQuery  `json:"callback_query"`
+	UpdateID      int            `json:"update_id"`
+	Message       *MessageUpdate `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 type MessageUpdate struct {
@@ -157,7 +236,7 @@ func (c *Client) GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Upda
 	q.Set("timeout", strconv.Itoa(timeoutSec))
 	q.Set("allowed_updates", `["message","callback_query"]`)
 
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?%s", c.token, q.Encode())
+	apiURL := fmt.Sprintf("%s/bot%s/getUpdates?%s", c.apiBase(), c.token, q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err

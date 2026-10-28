@@ -23,7 +23,8 @@ import (
 func TestCheckSSLWarn(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	// TLS checks NotAfter against the wall clock.
+	now := time.Now().UTC().Truncate(time.Second)
 
 	tests := []struct {
 		name       string
@@ -102,7 +103,7 @@ func TestCheckSSLWarn(t *testing.T) {
 func TestCheckSSLWarnPriorityOverLatency(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	srv := newTLSServer(t, now.Add(3*24*time.Hour), false)
 	defer srv.Close()
 
@@ -181,4 +182,65 @@ func newTLSServer(t *testing.T, notAfter time.Time, skipVerify bool) *httptest.S
 		},
 	}
 	return srv
+}
+
+func TestCheckFollowRedirects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		follow   bool
+		expect   []int
+		wantCode int
+		wantHit  bool
+	}{
+		{name: "301 not followed", follow: false, expect: []int{301}, wantCode: 301, wantHit: false},
+		{name: "301 followed", follow: true, expect: []int{200}, wantCode: 200, wantHit: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			hit := make(chan struct{}, 1)
+			final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/landed" {
+					http.NotFound(w, r)
+					return
+				}
+				hit <- struct{}{}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer final.Close()
+
+			redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, final.URL+"/landed", http.StatusMovedPermanently)
+			}))
+			defer redir.Close()
+
+			follow := tt.follow
+			chk := New()
+			res := chk.Check(context.Background(), config.Target{
+				Name:            "redir",
+				URL:             redir.URL,
+				Method:          http.MethodGet,
+				ExpectStatus:    tt.expect,
+				Timeout:         config.Duration(5 * time.Second),
+				FollowRedirects: &follow,
+			})
+			if res.Status != OK || res.StatusCode != tt.wantCode {
+				t.Fatalf("status=%v code=%d err=%q", res.Status, res.StatusCode, res.Err)
+			}
+			select {
+			case <-hit:
+				if !tt.wantHit {
+					t.Fatal("request reached redirect target")
+				}
+			default:
+				if tt.wantHit {
+					t.Fatal("request did not reach redirect target")
+				}
+			}
+		})
+	}
 }

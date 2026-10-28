@@ -9,13 +9,13 @@ import (
 func TestTelegramCommand(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/status":          "status",
-		"/status@PingBot":  "status",
-		"/stats":           "stats",
-		"/history":         "history",
-		"/help":            "help",
-		"hello":            "",
-		"":                 "",
+		"/status":         "status",
+		"/status@PingBot": "status",
+		"/stats":          "stats",
+		"/history":        "history",
+		"/help":           "help",
+		"hello":           "",
+		"":                "",
 	}
 	for in, want := range cases {
 		if got := telegram.Command(in); got != want {

@@ -44,6 +44,7 @@ See [config.example.yaml](config.example.yaml). `${VAR}` expands from the enviro
 |---|---|---|
 | `method` | `GET` | |
 | `expect_status` | `[200]` | |
+| `follow_redirects` | `true` | unset + 3xx in `expect_status` → `false` |
 | `interval` / `timeout` | `30s` / `5s` | |
 | `max_latency_ms` | off | slower → `degraded` |
 | `ssl_warn_days` | off | HTTPS only; cert within N days → `degraded`, expired → `down` |

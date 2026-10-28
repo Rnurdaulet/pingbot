@@ -28,15 +28,38 @@ type Result struct {
 }
 
 type Checker struct {
-	client *http.Client
-	now    func() time.Time
+	client     *http.Client
+	noRedirect *http.Client
+	now        func() time.Time
 }
 
 func New() *Checker {
+	client := &http.Client{Timeout: 30 * time.Second}
 	return &Checker{
-		client: &http.Client{Timeout: 30 * time.Second},
-		now:    time.Now,
+		client:     client,
+		noRedirect: clientWithoutRedirects(client),
+		now:        time.Now,
 	}
+}
+
+// clientWithoutRedirects stops at the first response so a 3xx can match.
+// The TLS cert is then that of the configured URL.
+func clientWithoutRedirects(base *http.Client) *http.Client {
+	c := *base
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &c
+}
+
+func (c *Checker) clientFor(t config.Target) *http.Client {
+	if t.FollowRedirectsEnabled() {
+		return c.client
+	}
+	if c.noRedirect == nil {
+		return clientWithoutRedirects(c.client)
+	}
+	return c.noRedirect
 }
 
 func (c *Checker) Check(ctx context.Context, t config.Target) Result {
@@ -57,7 +80,7 @@ func (c *Checker) Check(ctx context.Context, t config.Target) Result {
 	}
 
 	start := time.Now()
-	resp, err := c.client.Do(req)
+	resp, err := c.clientFor(t).Do(req)
 	latency := time.Since(start)
 	if err != nil {
 		return Result{Status: Fail, Latency: latency, Err: err.Error()}

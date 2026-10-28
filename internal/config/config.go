@@ -32,15 +32,15 @@ type Config struct {
 }
 
 type Server struct {
-	Addr string `yaml:"addr"`
+	Addr     string `yaml:"addr"`
 	APIToken string `yaml:"api_token"` // Bearer for /api/*; empty = open
 }
 
 type Telegram struct {
 	BotToken       string `yaml:"bot_token"`
 	ChatID         string `yaml:"chat_id"`
-	StartupNotify  *bool  `yaml:"startup_notify"`    // nil = true (send message on start)
-	RequireOnStart bool   `yaml:"require_on_start"`  // if true, failed startup notify exits
+	StartupNotify  *bool  `yaml:"startup_notify"`   // nil = true (send message on start)
+	RequireOnStart bool   `yaml:"require_on_start"` // if true, failed startup notify exits
 }
 
 // StartupNotifyEnabled reports whether a Telegram message should be sent on start.
@@ -71,18 +71,37 @@ type Defaults struct {
 }
 
 type Target struct {
-	Name          string            `yaml:"name"`
-	URL           string            `yaml:"url"`
-	Method        string            `yaml:"method"`
-	Headers       map[string]string `yaml:"headers"`
-	Body          string            `yaml:"body"`
-	ExpectStatus  []int             `yaml:"expect_status"`
-	Interval      Duration          `yaml:"interval"`
-	Timeout       Duration          `yaml:"timeout"`
-	MaxLatencyMS  int               `yaml:"max_latency_ms"`
-	SSLWarnDays   int               `yaml:"ssl_warn_days"` // 0 = off; warn when cert expires within N days
-	FailThreshold int               `yaml:"fail_threshold"`
-	OkThreshold   int               `yaml:"ok_threshold"`
+	Name            string            `yaml:"name"`
+	URL             string            `yaml:"url"`
+	Method          string            `yaml:"method"`
+	Headers         map[string]string `yaml:"headers"`
+	Body            string            `yaml:"body"`
+	ExpectStatus    []int             `yaml:"expect_status"`
+	FollowRedirects *bool             `yaml:"follow_redirects"` // nil = true, except expect_status has a 3xx
+	Interval        Duration          `yaml:"interval"`
+	Timeout         Duration          `yaml:"timeout"`
+	MaxLatencyMS    int               `yaml:"max_latency_ms"`
+	SSLWarnDays     int               `yaml:"ssl_warn_days"` // 0 = off; warn when cert expires within N days
+	FailThreshold   int               `yaml:"fail_threshold"`
+	OkThreshold     int               `yaml:"ok_threshold"`
+}
+
+// FollowRedirectsEnabled reports whether checks should follow HTTP redirects.
+// Unset defaults to true, unless expect_status contains a 3xx code.
+func (t Target) FollowRedirectsEnabled() bool {
+	if t.FollowRedirects != nil {
+		return *t.FollowRedirects
+	}
+	return !hasRedirectStatus(t.ExpectStatus)
+}
+
+func hasRedirectStatus(codes []int) bool {
+	for _, code := range codes {
+		if code >= 300 && code < 400 {
+			return true
+		}
+	}
+	return false
 }
 
 func Load(path string) (*Config, error) {
@@ -140,6 +159,10 @@ func (c *Config) applyDefaults() {
 		}
 		if len(t.ExpectStatus) == 0 {
 			t.ExpectStatus = []int{200}
+		}
+		if t.FollowRedirects == nil {
+			follow := !hasRedirectStatus(t.ExpectStatus)
+			t.FollowRedirects = &follow
 		}
 		if t.Interval == 0 {
 			t.Interval = c.Defaults.Interval
